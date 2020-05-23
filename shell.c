@@ -7,6 +7,7 @@
 
 #include "shell.h"
 #include "cmd.h"
+#include "internal_cmds.h"
 
 Shell_t *sh;
 
@@ -42,7 +43,7 @@ int shell_init()
 	signal(SIGTSTP, SIG_IGN);
 	signal(SIGTTIN, SIG_IGN);
 	signal(SIGTTOU, SIG_IGN);
-	signal(SIGCHLD, SIG_IGN);
+//	signal(SIGCHLD, SIG_IGN);
 
 	if (setpgid(sh->pid, sh->pid) < 0)
 	{
@@ -59,18 +60,26 @@ int shell_init()
 	return 0;
 }
 
+void shell_push_job(Job_t *j)
+{
+	Job_t **ptr;
+
+	ptr = &(sh->first_j);
+
+	while (*ptr)
+		ptr = &((*ptr)->next);
+
+	*ptr = j;
+}
+
 void shell_free()
 {
 	free(sh);
 }
 
-int shell_internal_cmd(const char *name, int fd_in, int fd_out, int fd_err)
+int shell_internal_cmd(Cmd_t *c, int fd_in, int fd_out, int fd_err)
 {
-	//FILE *fh_in =  fdopen(fd_in, "r");
-	FILE *fh_out = fdopen(fd_out, "w");
-
-	fwrite("Hello\n", 1, 6, fh_out);
-	fflush(fh_out);
+	(void)internal_call(c, sh, fd_in, fd_out, fd_err);
 
 	return 0;
 }
@@ -79,9 +88,14 @@ int shell_get_cmdline(char *buf, int n)
 {
 	int read_c;
 	char fmt_str[10];
+	char *cwd = NULL;
 
-	printf(">>> ");
+	cwd = getcwd(cwd, 0);
+
+	printf("%s > ", cwd);
 	fflush(stdout);
+	free(cwd);
+
 	sprintf(fmt_str, "%%%d[^\n]", n - 1);
 
 	read_c = scanf(fmt_str, buf);
@@ -218,6 +232,28 @@ void shell_free_tmp_argv(int argc, char **argv)
 		free(argv[i]);
 }
 
+void shell_cleanup()
+{
+	Job_t **ptr;
+	Job_t *tmp;
+
+	ptr = &sh->first_j;
+
+	while (*ptr)
+	{
+		if (job_is_completed(*ptr))
+		{
+			tmp = *ptr;
+			*ptr = (*ptr)->next;
+			job_free(tmp);
+
+			continue;
+		}
+
+		ptr = &((*ptr)->next);
+	}
+}
+
 int shell_mainloop()
 {
 	Job_t *j;
@@ -231,7 +267,6 @@ int shell_mainloop()
 	char *argv[255] = { NULL };
 
 	int   r = 0;
-	int internal = 0;
 
 	while (1)
 	{
@@ -245,7 +280,13 @@ int shell_mainloop()
 		}
 
 		if (!strcmp(buf, ""))
+		{
+			for (j = sh->first_j; j; j = j->next)
+			{
+				job_wait(j, 1);
+			}
 			continue;
+		}
 
 		cmdc = shell_parse_cmdline(buf, cmds);
 		if (cmdc <= 0)
@@ -257,18 +298,17 @@ int shell_mainloop()
 		j = job_new(sh->pgid, &sh->def_tmodes, &sh->tmodes);
 		j->internal_cmd_cb = shell_internal_cmd;
 
+		shell_push_job(j);
+
 		for (int i = 0; i < cmdc; i++)
 		{
 			argc = shell_parse_cmd(cmds[i], argv);
 
-			internal = 0;
-			if (!strcmp(argv[0], "fg"))
-				internal = 1;
-
-			cmd = cmd_new(internal, argc, argv);
+			cmd = cmd_new(0, argc, argv);
+			if (internal_cmd_exists(cmd))
+				cmd->type = CMD_INTERNAL;
 
 			job_push_cmd(j, cmd);
-//			job_push_process(j, argc, argv);
 
 			shell_free_tmp_argv(argc, argv);
 		}
@@ -276,7 +316,7 @@ int shell_mainloop()
 		shell_free_tmp_argv(cmdc, cmds);
 
 		job_launch(j, 1);
-		job_free(j);
+		shell_cleanup();
 	}
 
 	return 0;

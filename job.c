@@ -22,7 +22,11 @@ Job_t *job_new(pid_t sh_pgid, struct termios *tmodes, struct termios *sh_tmodes)
 	j->fd_stderr = STDERR_FILENO;
 	j->shell_pgid = sh_pgid;
 	j->sh_tmodes = sh_tmodes;
+	j->bg = 0;
+
 	j->interactive = 1;
+	if (!isatty(j->fd_stdin))
+		j->interactive = 0;
 
 	memcpy(&j->tmodes, tmodes, sizeof(struct termios));
 	memcpy(j->sh_tmodes, sh_tmodes, sizeof(struct termios));
@@ -91,6 +95,11 @@ int job_is_stopped(Job_t* j)
 	return 0;
 }
 
+int job_is_bg(Job_t *j)
+{
+	return j->bg;
+}
+
 int job_is_completed(Job_t* j)
 {
 	Process_t *p;
@@ -103,33 +112,69 @@ int job_is_completed(Job_t* j)
 	return 1;
 }
 
-int job_wait(Job_t* j)
+int job_wait(Job_t* j, int nonblock)
 {
 	int status;
 	int r;
+	int options;
 	pid_t pid;
+	Process_t *p;
+
+	options = WUNTRACED;
+	if (nonblock)
+		options |= WNOHANG;
 
 	while (1)
 	{
-		pid = waitpid(WAIT_ANY, &status, WUNTRACED);
-		if (pid == 0 || errno == ECHILD) 
-		{
-			fprintf(stderr, "ECHILD\n");
-			return -1;
-		}
-
+		pid = waitpid(-1 * j->pgid, &status, options);
 		if (pid < 0)
 		{
 			perror("waitpid");
 			return -1;
 		}
 
+		if (pid == 0) 
+		{
+			fprintf(stderr, "No changes on job: %s\n", j->first_c->argv[0]);
+			return -1;
+		}
+
+		if (pid == -1 && errno == ECHILD)
+		{
+			for (p = j->first_p; p; p = p->next)
+			{
+				p->completed = 1;
+				p->stopped = 0;
+			}
+
+			fprintf(stderr, "ECHILD (%d)\n", pid);
+			return -1;
+		}
+
+
 		r = job_update_status(j, pid, status);
 		if (r)
 			return r;
 
-		if (job_is_stopped(j) || job_is_completed(j))
+		if (job_is_stopped(j))
+		{
+			j->bg = 1;
+
+			fprintf(stderr, "job is stopped\n");
 			break;
+		}
+		else if (job_is_completed(j))
+		{
+			j->bg = 0;
+
+			fprintf(stderr, "job is completed\n");
+			break;
+		}
+		else
+		{
+			fprintf(stderr, "job is running\n");
+			break;
+		}
 	}
 
 	return 0;
@@ -152,16 +197,17 @@ int job_update_status(Job_t *j, pid_t pid, int status)
 		{
 			if (WIFSTOPPED(status))
 			{
-				fprintf (stderr, "child process %d is stopped\n", p->pid);
+				fprintf(stderr, "child process %d is stopped\n", p->pid);
 				p->stopped = 1;
 			}
 			else
 			{
-				fprintf (stderr, "child process %d is completed\n", p->pid);
+				fprintf(stderr, "child process %d is completed\n", p->pid);
 				p->completed = 1;
+				p->stopped = 0;
 
 				if (WIFSIGNALED(status))
-					fprintf (stderr, "%d: Terminated by signal %d.\n",
+					fprintf(stderr, "%d: Terminated by signal %d.\n",
 							pid, WTERMSIG(status));
 			}
 
@@ -176,17 +222,20 @@ int job_update_status(Job_t *j, pid_t pid, int status)
 void job_put_fg(Job_t *j, int cont)
 {
 	tcsetpgrp(j->fd_stdin, j->pgid);
+	Process_t* p;
+
+	j->bg = 0;
 
 	if (cont)
 	{
+		for (p = j->first_p; p; p = p->next)
+			p->stopped = 0;
+
 		tcsetattr(j->fd_stdin, TCSADRAIN, &j->tmodes);
-		if (kill(-1 * j->pgid, SIGCONT) < 0)
-		{
-			perror("kill");
-		}
+		job_continue(j);
 	}
 
-	(void)job_wait(j);
+	(void)job_wait(j, 0);
 
 	tcgetattr(j->fd_stdin, &j->tmodes);
 	tcsetattr(j->fd_stdin, TCSADRAIN, j->sh_tmodes);
@@ -195,13 +244,20 @@ void job_put_fg(Job_t *j, int cont)
 
 void job_put_bg(Job_t *j, int cont)
 {
+	j->bg = 1;
 	if (cont)
+		job_continue(j);
+}
+
+int job_continue(Job_t *j)
+{
+	if (kill(-1 * j->pgid, SIGCONT) < 0)
 	{
-		if (kill(-1 * j->pgid, SIGCONT) < 0)
-		{
-			perror("kill");
-		}
+		perror("kill");
+		return -1;
 	}
+
+	return 0;
 }
 
 void job_launch(Job_t* j, int foreground)
@@ -213,10 +269,9 @@ void job_launch(Job_t* j, int foreground)
 	int p_in;
 	int p_out;
 	int r;
+	int wait_needed = 0;;
 
 	p_in = j->fd_stdin;
-
-#if 1
 	for (c = j->first_c; c; c = c->next)
 	{
 		p_out = j->fd_stdout;
@@ -224,21 +279,21 @@ void job_launch(Job_t* j, int foreground)
 		{
 			if (pipe(p_pipe) < 0)
 			{
-				perror ("pipe");
-				exit (1);
+				perror("pipe");
+				exit(1);
 			}
 
 			p_out = p_pipe[1];
 		}
 
-		p = job_push_process(j, c->argc, c->argv);
-
-		p->fd_in  = p_in;
-		p->fd_out = p_out;
-		p->fd_err = j->fd_stderr;
-
 		if (c->type == CMD_EXECUTABLE)
 		{
+			p = job_push_process(j, c->argc, c->argv);
+
+			p->fd_in  = p_in;
+			p->fd_out = p_out;
+			p->fd_err = j->fd_stderr;
+
 			pid = process_fork(p, j->pgid, j->fd_stdin, j->interactive, foreground);
 
 			p->pid = pid;
@@ -249,10 +304,12 @@ void job_launch(Job_t* j, int foreground)
 
 				setpgid(pid, j->pgid);
 			}
+
+			wait_needed = 1;
 		}
 		else if (c->type == CMD_INTERNAL)
 		{
-			r = j->internal_cmd_cb(p->argv[0], p->fd_in, p->fd_out, p->fd_err);
+			r = j->internal_cmd_cb(c, p_in, p_out, j->fd_stderr);
 			if (r < 0)
 			{
 				fprintf(stderr, "internal_call failed\n");
@@ -267,66 +324,21 @@ void job_launch(Job_t* j, int foreground)
 		p_in = p_pipe[0];
 	}
 
-#endif
-
-#if 0
-	for (p = j->first_p; p; p = p->next)
+	if (wait_needed)
 	{
-		p_out = j->fd_stdout;
-		if (p->next)
+		if (!j->interactive)
 		{
-			if (pipe(p_pipe) < 0)
-			{
-				perror ("pipe");
-				exit (1);
-			}
-
-			p_out = p_pipe[1];
+			(void)job_wait(j, 0);
+			return;
 		}
 
-		p->fd_in  = p_in;
-		p->fd_out = p_out;
-		p->fd_err = j->fd_stderr;
-
-		pid = fork();
-		if (pid < 0)
+		if (!foreground)
 		{
-			perror ("fork");
-			exit(1);
+			j->bg = 1;
+			return;
 		}
 
-		if (pid == 0) // child 
-			process_launch(p, j->pgid, j->fd_stdin, j->interactive, foreground);
-
-		// parent continues from here
-		p->pid = pid; // pid is child's pid 
-		if (j->interactive)
-		{
-			if (!j->pgid)
-				j->pgid = pid;
-
-			setpgid(pid, j->pgid);
-		}
-
-		// The parent won't need the pipes. 
-		if (p_in != j->fd_stdin)
-			close(p_in);
-		if (p_out != j->fd_stdout)
-			close(p_out);
-
-		p_in = p_pipe[0]; // input fd for the next process in the list 
-	}
-#endif
-
-	if (!isatty(j->fd_stdin))
-	{
-		(void)job_wait(j);
-		return;
-	}	
-
-	if (foreground)
 		job_put_fg(j, 0);
-	else
-		job_put_bg(j, 0);
+	}
 }
 

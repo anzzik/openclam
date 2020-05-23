@@ -22,12 +22,13 @@ struct Shell_s
 
 int shell_init();
 void shell_free();
+void shell_push_job(Job_t *j);
 int shell_get_cmdline();
 void shell_free_tmp_argv(int argc, char **argv);
 int shell_parse_cmd(char *cmd, char **argv);
 int shell_tok_parse_cmdline(char *cmdline, char **argv);
 int shell_parse_cmdline(char *cmdline, char **argv);
-int shell_internal_cmd(const char *name, int fd_in, int fd_out, int fd_err);
+int shell_internal_cmd(Cmd_t *c, int fd_in, int fd_out, int fd_err);
 int shell_mainloop();
 
 #endif
