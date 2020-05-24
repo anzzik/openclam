@@ -19,7 +19,7 @@ struct Job_s
 	struct termios tmodes;
 	struct termios *sh_tmodes;
 
-	int (*internal_cmd_cb)(Cmd_t *c, int, int, int);
+	int (*builtin_cmd_cb)(Cmd_t *c, int, int, int);
 
 	Process_t *first_p;
 	Cmd_t *first_c;

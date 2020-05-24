@@ -11,7 +11,7 @@
 #include "job.h"
 #include "process.h"
 #include "cmd.h"
-#include "internal_cmds.h"
+#include "builtin_cmd.h"
 
 Job_t *job_new(pid_t sh_pgid, struct termios *tmodes, struct termios *sh_tmodes)
 {
@@ -170,11 +170,6 @@ int job_wait(Job_t* j, int nonblock)
 			fprintf(stderr, "job is completed\n");
 			break;
 		}
-		else
-		{
-			fprintf(stderr, "job is running\n");
-			break;
-		}
 	}
 
 	return 0;
@@ -309,10 +304,10 @@ void job_launch(Job_t* j, int foreground)
 		}
 		else if (c->type == CMD_INTERNAL)
 		{
-			r = j->internal_cmd_cb(c, p_in, p_out, j->fd_stderr);
+			r = j->builtin_cmd_cb(c, p_in, p_out, j->fd_stderr);
 			if (r < 0)
 			{
-				fprintf(stderr, "internal_call failed\n");
+				fprintf(stderr, "builtin_call failed\n");
 			}
 		}
 

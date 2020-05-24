@@ -7,9 +7,9 @@
 
 #include "shell.h"
 #include "cmd.h"
-#include "internal_cmds.h"
+#include "builtin_cmd.h"
 
-Shell_t *sh;
+static Shell_t *sh;
 
 int shell_init()
 {
@@ -77,9 +77,9 @@ void shell_free()
 	free(sh);
 }
 
-int shell_internal_cmd(Cmd_t *c, int fd_in, int fd_out, int fd_err)
+int shell_builtin_cmd(Cmd_t *c, int fd_in, int fd_out, int fd_err)
 {
-	(void)internal_call(c, sh, fd_in, fd_out, fd_err);
+	(void)builtin_call(c, sh, fd_in, fd_out, fd_err);
 
 	return 0;
 }
@@ -102,128 +102,6 @@ int shell_get_cmdline(char *buf, int n)
 	getchar();
 
 	return read_c;
-}
-
-int shell_parse_cmd(char *cmd, char **argv)
-{
-	char *tok;
-	int argv_i = 0;
-
-	tok = strtok(cmd, " \t\"\'");
-	if (!tok)
-	{
-		argv[0] = malloc(strlen(cmd) + 1);
-		memcpy(argv[0], cmd, strlen(cmd) + 1);
-
-		return 1;
-	}
-
-	while (tok)
-	{
-		argv[argv_i] = malloc(strlen(tok) + 1);
-		memcpy(argv[argv_i], tok, strlen(tok) + 1);
-
-		argv_i++;
-		tok = strtok(NULL, " \t\"\'");
-	}
-
-	return argv_i;
-}
-
-int shell_tok_parse_cmdline(char *cmdline, char **cmds)
-{
-	char *tok;
-	int cmd_i = 0;
-
-	tok = strtok(cmdline, "|");
-	if (!tok)
-	{
-		cmds[0] = cmdline;
-		return 1;
-	}
-
-	while (tok)
-	{
-		cmds[cmd_i++] = tok;
-		tok = strtok(NULL, "|");
-	}
-
-	return cmd_i;
-}
-
-int shell_parse_cmdline(char* cmdline, char **cmds)
-{
-	int i = 0;
-	char c;
-	int c_i = 0;
-	int cmd_i = 0;
-	int quote = 0;
-	int d_quote = 0;
-	int esc = 0;
-	char cmd[255] = {'\0'};
-
-	do
-	{
-		c = cmdline[i++];
-
-		if (!esc && c == '"')
-		{
-			if (d_quote)
-				d_quote = 0;
-			else if (!d_quote && quote)
-				d_quote = 0;
-			else if (!d_quote && !quote)
-				d_quote = 1;
-		}
-
-		if (!esc && c == '\'')
-		{
-			if (quote)
-				quote = 0;
-			else if (!quote && d_quote)
-				quote = 0;
-			else if (!quote && !d_quote)
-				quote = 1;
-		}
-
-		if (c == '|' && !quote && !d_quote && !esc)
-		{
-			cmd[c_i] = '\0';
-			c_i = 0;
-
-			goto l_cmd_ready;
-		}
-
-		cmd[c_i++] = c;
-
-		if (esc)
-			esc = 0;
-
-		if (!quote && !d_quote && !esc && c == '\\')
-			esc = 1;
-
-		if (!c)
-		{
-			if (quote || d_quote)
-			{
-				fprintf(stderr, "Missing a quote\n");
-				return -1;
-			}
-
-			goto l_cmd_ready;
-		}
-
-		continue;
-
-l_cmd_ready:
-		cmds[cmd_i] = malloc(strlen(cmd) + 1);
-		memcpy(cmds[cmd_i], cmd, strlen(cmd) + 1);
-		cmd_i++;
-
-
-	} while (c);
-
-	return cmd_i;
 }
 
 void shell_free_tmp_argv(int argc, char **argv)
@@ -282,30 +160,29 @@ int shell_mainloop()
 		if (!strcmp(buf, ""))
 		{
 			for (j = sh->first_j; j; j = j->next)
-			{
 				job_wait(j, 1);
-			}
+
 			continue;
 		}
 
-		cmdc = shell_parse_cmdline(buf, cmds);
-		if (cmdc <= 0)
+		cmdc = cmd_parse_cmdline(buf, cmds);
+		if (cmdc == 0)
 		{
-			shell_free_tmp_argv(cmdc, cmds);
+			fprintf(stderr, "cmd_parse_cmdline: failed\n");
 			continue;
 		}
 
 		j = job_new(sh->pgid, &sh->def_tmodes, &sh->tmodes);
-		j->internal_cmd_cb = shell_internal_cmd;
+		j->builtin_cmd_cb = shell_builtin_cmd;
 
 		shell_push_job(j);
 
 		for (int i = 0; i < cmdc; i++)
 		{
-			argc = shell_parse_cmd(cmds[i], argv);
+			argc = cmd_parse_cmd(cmds[i], argv);
 
 			cmd = cmd_new(0, argc, argv);
-			if (internal_cmd_exists(cmd))
+			if (builtin_cmd_exists(cmd))
 				cmd->type = CMD_INTERNAL;
 
 			job_push_cmd(j, cmd);
