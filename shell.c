@@ -5,37 +5,39 @@
 #include <errno.h>
 #include <stdio.h>
 
+#include <sys/types.h>
+#include <termios.h>
+
 #include "shell.h"
-#include "cmd.h"
+#include "cmd_parser.h"
 #include "builtin_cmd.h"
+
 
 static Shell_t *sh;
 
 int shell_init()
 {
+	pid_t fg_pgid;
 	sh = malloc(sizeof(Shell_t));
 
-	sh->shell_fd = STDIN_FILENO;
+	sh->fd = STDIN_FILENO;
 	sh->pid      = getpid();
 	sh->pgid     = getpgrp();
 
-	if (!isatty(sh->shell_fd))
+	if (!isatty(sh->fd))
 	{
 		fprintf(stderr, "%s\n", "shell is NOT interactive");
-		sh->interactive = 0;
 
 		return -1;
 	}
 
-	sh->fg_pgid = tcgetpgrp(sh->shell_fd);
-	sh->interactive = 1;
-
-	while (sh->fg_pgid != sh->pgid)
+	fg_pgid = tcgetpgrp(sh->fd);
+	while (fg_pgid != sh->pgid)
 	{
 		fprintf(stderr, "shell is not in foreground, have to stop it until fg..\n");
 		kill(-1 * sh->pgid, SIGTTIN); // this puts the process group in T state
 		
-		sh->fg_pgid = tcgetpgrp(sh->shell_fd);
+		fg_pgid = tcgetpgrp(sh->fd);
 	}
 
 	signal(SIGINT,  SIG_IGN);
@@ -53,8 +55,8 @@ int shell_init()
 
 	sh->pgid = sh->pid;
 
-	tcsetpgrp(sh->shell_fd, sh->pid);
-	tcgetattr(sh->shell_fd, &sh->tmodes);
+	tcsetpgrp(sh->fd, sh->pid);
+	tcgetattr(sh->fd, &sh->tmodes);
 	memcpy(&sh->def_tmodes, &sh->tmodes, sizeof(struct termios));
 
 	return 0;
@@ -65,7 +67,6 @@ void shell_push_job(Job_t *j)
 	Job_t **ptr;
 
 	ptr = &(sh->first_j);
-
 	while (*ptr)
 		ptr = &((*ptr)->next);
 
@@ -74,6 +75,7 @@ void shell_push_job(Job_t *j)
 
 void shell_free()
 {
+	shell_free_jobs(0);
 	free(sh);
 }
 
@@ -88,9 +90,9 @@ int shell_get_cmdline(char *buf, int n)
 {
 	int read_c;
 	char fmt_str[10];
-	char *cwd = NULL;
+	char *cwd;
 
-	cwd = getcwd(cwd, 0);
+	cwd = getcwd(NULL, 0);
 
 	printf("%s > ", cwd);
 	fflush(stdout);
@@ -110,41 +112,49 @@ void shell_free_tmp_argv(int argc, char **argv)
 		free(argv[i]);
 }
 
-void shell_cleanup()
+void shell_free_jobs(int only_completed)
 {
 	Job_t **ptr;
 	Job_t *tmp;
 
 	ptr = &sh->first_j;
-
 	while (*ptr)
 	{
-		if (job_is_completed(*ptr))
-		{
-			tmp = *ptr;
-			*ptr = (*ptr)->next;
-			job_free(tmp);
+		if (!only_completed)
+			goto l_do_free;
 
-			continue;
-		}
+		if (job_is_completed(*ptr))
+			goto l_do_free;
 
 		ptr = &((*ptr)->next);
+		continue;
+
+l_do_free:
+		tmp = *ptr;
+		*ptr = (*ptr)->next;
+		job_free(tmp);
 	}
+}
+
+void shell_nb_wait()
+{
+	Job_t *j;
+
+	for (j = sh->first_j; j; j = j->next)
+		job_wait(j, 1);
 }
 
 int shell_mainloop()
 {
 	Job_t *j;
 	Cmd_t *cmd;
-	char  buf[255] = { '\0' };
+	CmdParserState_t *cps;
 
-	int   cmdc = 0;
-	char *cmds[255] = { NULL };
+	char buf[255] = { '\0' };
+	int r = 0;
+	int cps_status;
 
-	int   argc = 0;
-	char *argv[255] = { NULL };
-
-	int   r = 0;
+	cps = cmd_parser_new();
 
 	while (1)
 	{
@@ -159,41 +169,34 @@ int shell_mainloop()
 
 		if (!strcmp(buf, ""))
 		{
-			for (j = sh->first_j; j; j = j->next)
-				job_wait(j, 1);
-
+			shell_nb_wait();
 			continue;
 		}
 
-		cmdc = cmd_parse_cmdline(buf, cmds);
-		if (cmdc == 0)
+		cmd_parser_reset(cps);
+		cmd_parser_feed(cps, buf);
+
+		while (1)
 		{
-			fprintf(stderr, "cmd_parse_cmdline: failed\n");
-			continue;
+			cps_status = cmd_parser_analyze(cps);
+
+			if (cps_status & CPS_TAKE_OUTPUT)
+			{
+				cmd = cmd_parser_get_cmds(cps);
+
+				j = job_new(sh->pgid, &sh->def_tmodes, &sh->tmodes);
+				shell_push_job(j);
+
+				j->builtin_cmd_cb = shell_builtin_cmd;
+				job_push_cmd(j, cmd);
+				job_launch(j, 1);
+
+				shell_free_jobs(1);
+			}
+
+			if (cps_status & CPS_GIVE_INPUT)
+				break;
 		}
-
-		j = job_new(sh->pgid, &sh->def_tmodes, &sh->tmodes);
-		j->builtin_cmd_cb = shell_builtin_cmd;
-
-		shell_push_job(j);
-
-		for (int i = 0; i < cmdc; i++)
-		{
-			argc = cmd_parse_cmd(cmds[i], argv);
-
-			cmd = cmd_new(0, argc, argv);
-			if (builtin_cmd_exists(cmd))
-				cmd->type = CMD_INTERNAL;
-
-			job_push_cmd(j, cmd);
-
-			shell_free_tmp_argv(argc, argv);
-		}
-
-		shell_free_tmp_argv(cmdc, cmds);
-
-		job_launch(j, 1);
-		shell_cleanup();
 	}
 
 	return 0;

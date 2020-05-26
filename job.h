@@ -1,8 +1,10 @@
 #ifndef JOB_H
 #define JOB_H
 
+#include <termios.h>
+
 #include "process.h"
-#include "cmd.h"
+#include "cmd_parser.h"
 
 typedef struct Job_s Job_t;
 struct Job_s

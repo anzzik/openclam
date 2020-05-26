@@ -1,30 +1,30 @@
 #ifndef SHELL_H
 #define SHELL_H
 
-#include <sys/types.h>
-#include <termios.h>
-
 #include "job.h"
 
 typedef struct Shell_s Shell_t;
 struct Shell_s
 {
-	Job_t *first_j;
-	int shell_fd;
+	int fd;
+
 	pid_t pid;
 	pid_t pgid;
-	pid_t fg_pgid;
-	int interactive;
+
 	struct termios tmodes;
 	struct termios def_tmodes;
+
+	Job_t *first_j;
 };
 
 int shell_init();
 void shell_free();
 void shell_push_job(Job_t *j);
 int shell_get_cmdline();
+void shell_free_jobs(int only_completed);
 void shell_free_tmp_argv(int argc, char **argv);
 int shell_builtin_cmd(Cmd_t *c, int fd_in, int fd_out, int fd_err);
+void shell_nb_wait();
 int shell_mainloop();
 
 #endif

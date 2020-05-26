@@ -10,7 +10,7 @@
 
 #include "job.h"
 #include "process.h"
-#include "cmd.h"
+#include "cmd_parser.h"
 #include "builtin_cmd.h"
 
 Job_t *job_new(pid_t sh_pgid, struct termios *tmodes, struct termios *sh_tmodes)
