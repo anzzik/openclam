@@ -183,15 +183,18 @@ int shell_mainloop()
 			if (cps_status & CPS_TAKE_OUTPUT)
 			{
 				cmd = cmd_parser_get_cmds(cps);
+				if (!cmd || cmd->argc == 0)
+					break;
 
 				j = job_new(sh->pgid, &sh->def_tmodes, &sh->tmodes);
 				shell_push_job(j);
 
 				j->builtin_cmd_cb = shell_builtin_cmd;
-				job_push_cmd(j, cmd);
+				job_set_cmd(j, cmd);
 				job_launch(j, 1);
 
 				shell_free_jobs(1);
+				cmd_parser_output_free(cps);
 			}
 
 			if (cps_status & CPS_GIVE_INPUT)

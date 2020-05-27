@@ -32,7 +32,7 @@ struct Job_s
 Job_t *job_new(pid_t sh_pgid, struct termios *tmodes, struct termios *sh_tmodes);
 void job_free(Job_t *j);
 Process_t *job_push_process(Job_t *j, int argc, char **argv);
-void job_push_cmd(Job_t *j, Cmd_t *c);
+void job_set_cmd(Job_t *j, Cmd_t *c);
 void job_launch(Job_t* j, int foreground);
 int job_is_stopped(Job_t* j);
 int job_is_completed(Job_t* j);

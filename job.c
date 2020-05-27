@@ -72,15 +72,12 @@ Process_t *job_push_process(Job_t *j, int argc, char **argv)
 	return *ptr;
 }
 
-void job_push_cmd(Job_t *j, Cmd_t *c)
+void job_set_cmd(Job_t *j, Cmd_t *c)
 {
-	Cmd_t **ptr;
+	Cmd_t *cc;
 
-	ptr = &j->first_c;
-	while (*ptr)
-		ptr = &((*ptr)->next);
-
-	*ptr = c;
+	cc = cmd_copy(c);
+	j->first_c = cc;
 }
 
 int job_is_stopped(Job_t* j)

@@ -21,7 +21,7 @@ int cmd_parser_status(CmdParserState_t *cps)
 
 int cmd_parser_buf_alloc(CmdParserState_t *cps, char *str)
 {
-	if (cps->buf_is_alloced)
+	if (cps->buffer)
 		return -1;
 
 	cps->buffer = calloc(strlen(str) + 1, 1);
@@ -30,18 +30,16 @@ int cmd_parser_buf_alloc(CmdParserState_t *cps, char *str)
 	cmd_parser_trim(cps->buffer);
 
 	cps->bufsize = strlen(cps->buffer) + 1;
-	cps->buf_is_alloced = 1;
 
 	return 0;
 }
 
 void cmd_parser_buf_free(CmdParserState_t *cps)
 {
-	if (!cps->buf_is_alloced)
+	if (!cps->buffer)
 		return;
 
 	free(cps->buffer);
-	cps->buf_is_alloced = 0;
 	cps->buffer = NULL;
 }
 
@@ -67,7 +65,7 @@ char cmd_parser_next_c(CmdParserState_t *cps)
 {
 	char c;
 
-	if (cps->c_ws)
+	if (cps->last_c_type == CT_WS)
 	{
 		while (cmd_parser_c_is_ws(cps->buffer[cps->i]))
 			cps->i++;
@@ -111,82 +109,89 @@ int cmd_parser_analyze(CmdParserState_t *cps)
 			*current_cmd = cmd_new();
 		}
 
-		if (cps->c_ws)
+		switch (cps->last_c_type)
 		{
-			if (arg_i == 0)
-				continue;
+			case CT_WS:
+				if (arg_i > 0)
+				{
+					current_arg[arg_i] = '\0';
+					cmd_add_arg(*current_cmd, current_arg);
+					arg_i = 0;
+				}
+				break;
 
-			current_arg[arg_i] = '\0';
-			cmd_add_arg(*current_cmd, current_arg);
-			arg_i = 0;
+			case CT_NEWLINE:
+				if (arg_i > 0)
+				{
+					current_arg[arg_i] = '\0';
+					cmd_add_arg(*current_cmd, current_arg);
+				}
 
-			continue;
+				cmd_set_ready(*current_cmd);
+				cps->flags |= CPS_TAKE_OUTPUT;
+
+				break;
+
+			case CT_NULL:
+				if (arg_i > 0)
+				{
+					current_arg[arg_i] = '\0';
+					cmd_add_arg(*current_cmd, current_arg);
+				}
+
+				cmd_set_ready(*current_cmd);
+				cps->flags = CPS_TAKE_OUTPUT | CPS_GIVE_INPUT;
+
+				break;
+
+			case CT_PIPE:
+				if (arg_i > 0)
+				{
+					current_arg[arg_i] = '\0';
+					cmd_add_arg(*current_cmd, current_arg);
+					arg_i = 0;
+				}
+
+				cmd_set_ready(*current_cmd);
+
+				break;
+
+			case CT_DOUBLEPIPE:
+				if (arg_i > 0)
+				{
+					current_arg[arg_i] = '\0';
+					cmd_add_arg(*current_cmd, current_arg);
+					arg_i = 0;
+				}
+
+				cmd_set_ready(*current_cmd);
+
+				break;
+
+			case CT_SEMICOLON:
+				if (arg_i > 0)
+				{
+					current_arg[arg_i] = '\0';
+					cmd_add_arg(*current_cmd, current_arg);
+					arg_i = 0;
+				}
+
+				cmd_set_ready(*current_cmd);
+				cps->flags = CPS_TAKE_OUTPUT;
+
+				break;
+
+			case CT_NORMAL:
+				current_arg[arg_i++] = c;
+				break;
+
+			default:
+				fprintf(stderr, "Error in cmd_parser, undefined state with char %c\n", c);
+				exit(-1);
 		}
 
-		if (cps->c_newline)
-		{
-			if (arg_i == 0)
-				continue;
-
-			current_arg[arg_i] = '\0';
-
-			cmd_add_arg(*current_cmd, current_arg);
-			cmd_set_ready(*current_cmd);
-			arg_i = 0;
-
-			cps->flags = CPS_TAKE_OUTPUT;
-
+		if (cps->flags & CPS_TAKE_OUTPUT)
 			break;
-		}
-
-		if (cps->c_null)
-		{
-			if (arg_i > 0)
-			{
-				current_arg[arg_i] = '\0';
-
-				cmd_add_arg(*current_cmd, current_arg);
-				arg_i = 0;
-			}
-
-			cmd_set_ready(*current_cmd);
-			cps->flags = CPS_TAKE_OUTPUT | CPS_GIVE_INPUT;
-
-			break;
-		}
-
-		if (cps->c_pipe)
-		{
-			current_arg[arg_i] = '\0';
-
-			if (arg_i > 0)
-			{
-				cmd_add_arg(*current_cmd, current_arg);
-				arg_i = 0;
-			}
-
-			cmd_set_ready(*current_cmd);
-
-			continue;
-		}
-
-		if (cps->c_semicolon)
-		{
-			current_arg[arg_i] = '\0';
-			if (arg_i > 0)
-			{
-				cmd_add_arg(*current_cmd, current_arg);
-				arg_i = 0;
-			}
-
-			cmd_set_ready(*current_cmd);
-
-			cps->flags = CPS_TAKE_OUTPUT;
-
-			break;
-		}
-
-		current_arg[arg_i++] = c;
 	}
 
 	if ((*current_cmd)->argc == 0)
@@ -223,105 +228,126 @@ void cmd_parser_reset(CmdParserState_t* cps)
 	memset(cps, '\0', sizeof(CmdParserState_t));
 }
 
+void cmd_parser_inc_last_type(CmdParserState_t *cps, CmdParserCType_t ctype)
+{
+	if (cps->last_c_type == ctype)
+	{
+		cps->last_c_count++;
+	}
+	else
+	{
+		cps->last_c_type = ctype;
+		cps->last_c_count = 1;
+	}
+}
+
 int cmd_parser(CmdParserState_t* cps, char c)
 {
 	if (!c)
 	{
-		cps->c_null = 1;
+		cps->last_c_type = CT_NULL;
+		cps->last_c_count = 1;
+
 		return 0;
 	}
 
 	if (cps->esc_next)
 	{
-		cps->esc_next = 0;
+		cmd_parser_inc_last_type(cps, CT_NORMAL);
 		return 1;
 	}
 
 	if (c == '"')
 	{
-		if (cps->dquote)
+
+		cmd_parser_inc_last_type(cps, CT_NORMAL);
+
+		if (cps->in_string && cps->dquote)
 		{
 			cps->dquote = 0;
 			cps->in_string = 0;
+
+			return 1;
 		}
-		else if (!cps->in_string)
+
+		if (!cps->in_string)
 		{
 			cps->dquote = 1;
 			cps->in_string = 1;
+
+			return 1;
 		}
 
-		cps->c_semicolon = 0;
-		cps->c_ws = 0;
-		cps->c_pipe = 0;
-		cps->c_newline = 0;
-
+		return 1;
 	}
-	else if (c == '\'')
+
+	if (c == '\'')
 	{
-		if (cps->squote)
+		cmd_parser_inc_last_type(cps, CT_NORMAL);
+
+		if (cps->in_string && cps->squote)
 		{
 			cps->squote = 0;
 			cps->in_string = 0;
+
+			return 1;
 		}
-		else if (!cps->in_string)
+
+		if (!cps->in_string)
 		{
 			cps->squote = 1;
 			cps->in_string = 1;
+
+			return 1;
 		}
 
-		cps->c_semicolon = 0;
-		cps->c_ws = 0;
-		cps->c_pipe = 0;
-		cps->c_newline = 0;
+		return 1;
 	}
-	else if (!cps->in_string && c == '\n')
-	{
-		cps->c_newline++;
 
-		cps->c_pipe = 0;
-		cps->c_ws = 0;
-		cps->c_semicolon = 0;
-	}
-	else if (!cps->in_string && c == '|')
+	if (cps->in_string)
 	{
-		cps->c_pipe++;
-
-		cps->c_newline = 0;
-		cps->c_ws = 0;
-		cps->c_semicolon = 0;
+		cmd_parser_inc_last_type(cps, CT_NORMAL);
+		return 1;
 	}
-	else if (!cps->in_string && (c == ' ' || c == '\t'))
+
+	if (c == '\n')
 	{
-		cps->c_ws++;
-
-		cps->c_pipe = 0;
-		cps->c_newline = 0;
-		cps->c_semicolon = 0;
+		cmd_parser_inc_last_type(cps, CT_NEWLINE);
+		return 1;
 	}
-	else if (!cps->in_string && c == ';')
+
+	if (c == '|')
 	{
-		cps->c_semicolon++;
+		cmd_parser_inc_last_type(cps, CT_PIPE);
+		if (cps->buffer[cps->i] == '|')
+		{
+			cps->i++;
+			cmd_parser_inc_last_type(cps, CT_DOUBLEPIPE);
+		}
 
-		cps->c_ws = 0;
-		cps->c_pipe = 0;
-		cps->c_newline = 0;
+		return 1;
 	}
-	else if (!cps->in_string && c == '\\')
+
+	if (c == ' ' || c == '\t')
+	{
+		cmd_parser_inc_last_type(cps, CT_WS);
+		return 1;
+	}
+
+	if (c == ';')
+	{
+		cmd_parser_inc_last_type(cps, CT_SEMICOLON);
+		return 1;
+	}
+
+	if (c == '\\')
 	{
 		cps->esc_next = 1;
+		cmd_parser_inc_last_type(cps, CT_NORMAL);
+		return 1;
+	}
 
-		cps->c_semicolon = 0;
-		cps->c_ws = 0;
-		cps->c_pipe = 0;
-		cps->c_newline = 0;
-	}
-	else
-	{
-		cps->c_semicolon = 0;
-		cps->c_ws = 0;
-		cps->c_pipe = 0;
-		cps->c_newline = 0;
-	}
+	cmd_parser_inc_last_type(cps, CT_NORMAL);
 
 	return 1;
 }
@@ -367,6 +393,36 @@ Cmd_t *cmd_new()
 	return c;
 }
 
+Cmd_t *cmd_copy(Cmd_t *c_src)
+{
+	Cmd_t *current_src;
+	Cmd_t **current_dst;
+	Cmd_t *c;
+	int i;
+
+	current_dst = &c;
+	current_src = c_src;
+
+	while (current_src)
+	{
+		*current_dst = cmd_new();
+
+		(*current_dst)->type = current_src->type;
+		(*current_dst)->argc = current_src->argc;
+
+		for (i = 0; i < current_src->argc; i++)
+		{
+			(*current_dst)->argv[i] = calloc(strlen(current_src->argv[i]) + 1, 1);
+			memcpy((*current_dst)->argv[i], current_src->argv[i], strlen(current_src->argv[i]));
+		}
+
+		current_src = current_src->next;
+		current_dst = &((*current_dst)->next);
+	}
+
+	return c;
+}
+
 void cmd_free(Cmd_t *c)
 {
 	for (int i = 0; i < c->argc; i++)
@@ -385,6 +441,9 @@ void cmd_add_arg(Cmd_t *c, char *arg)
 void cmd_set_ready(Cmd_t *c)
 {
 	c->ready = 1;
+
+	if (!c->argc)
+		return;
 
 	if (builtin_cmd_exists(c))
 		c->type = CMD_INTERNAL;
