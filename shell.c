@@ -148,7 +148,7 @@ int shell_mainloop()
 {
 	Job_t *j;
 	Cmd_t *cmd;
-	CmdParserState_t *cps;
+	CmdParser_t *cps;
 
 	char buf[255] = { '\0' };
 	int r = 0;
@@ -180,7 +180,7 @@ int shell_mainloop()
 		{
 			cps_status = cmd_parser_analyze(cps);
 
-			if (cps_status & CPS_TAKE_OUTPUT)
+			if (cps_status & CP_TAKE_OUTPUT)
 			{
 				cmd = cmd_parser_get_cmds(cps);
 				if (!cmd || cmd->argc == 0)
@@ -197,7 +197,7 @@ int shell_mainloop()
 				cmd_parser_output_free(cps);
 			}
 
-			if (cps_status & CPS_GIVE_INPUT)
+			if (cps_status & CP_GIVE_INPUT)
 				break;
 		}
 	}

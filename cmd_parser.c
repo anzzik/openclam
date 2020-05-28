@@ -5,21 +5,21 @@
 #include "cmd_parser.h"
 #include "builtin_cmd.h"
 
-CmdParserState_t *cmd_parser_new()
+CmdParser_t *cmd_parser_new()
 {
-	CmdParserState_t *cps = calloc(1, sizeof(CmdParserState_t));
+	CmdParser_t *cps = calloc(1, sizeof(CmdParser_t));
 
-	cps->flags |= CPS_GIVE_INPUT;
+	cps->flags |= CP_GIVE_INPUT;
 
 	return cps;
 }
 
-int cmd_parser_status(CmdParserState_t *cps)
+int cmd_parser_status(CmdParser_t *cps)
 {
 	return cps->flags;
 }
 
-int cmd_parser_buf_alloc(CmdParserState_t *cps, char *str)
+int cmd_parser_buf_alloc(CmdParser_t *cps, char *str)
 {
 	if (cps->buffer)
 		return -1;
@@ -34,7 +34,7 @@ int cmd_parser_buf_alloc(CmdParserState_t *cps, char *str)
 	return 0;
 }
 
-void cmd_parser_buf_free(CmdParserState_t *cps)
+void cmd_parser_buf_free(CmdParser_t *cps)
 {
 	if (!cps->buffer)
 		return;
@@ -43,7 +43,7 @@ void cmd_parser_buf_free(CmdParserState_t *cps)
 	cps->buffer = NULL;
 }
 
-int cmd_parser_feed(CmdParserState_t *cps, char *str)
+int cmd_parser_feed(CmdParser_t *cps, char *str)
 {
 	cmd_parser_buf_free(cps);
 	cmd_parser_buf_alloc(cps, str);
@@ -61,27 +61,218 @@ int cmd_parser_c_is_ws(char c)
 	return 0;
 }
 
-char cmd_parser_next_c(CmdParserState_t *cps)
+int cmd_parser_next_expr(CmdParser_t *cps)
 {
 	char c;
+	int len = 0;
 
-	if (cps->last_c_type == CT_WS)
+	while (1)
 	{
-		while (cmd_parser_c_is_ws(cps->buffer[cps->i]))
-			cps->i++;
+		c = cps->buffer[cps->i];
+		cmd_parser(cps, c);
+
+		switch (cps->state)
+		{
+			case CPS_NOTHING:
+				if (cps->last_c_type == CT_WS)
+					break;
+
+				if (cps->last_c_type == CT_NEWLINE)
+					break;
+
+				if (cps->last_c_type == CT_PIPE)
+				{
+					cps->i++;
+					cps->state = CPS_CMD_DONE;
+					break;
+				}
+
+				if (cps->last_c_type == CT_DOUBLEPIPE)
+				{
+					cps->i += 2;
+					cps->state = CPS_CMDCHAIN_DONE;
+					break;
+				}
+
+				if (cps->last_c_type == CT_NULL)
+				{
+					cps->state = CPS_CMDCHAIN_DONE;
+					break;
+				}
+
+				if (cps->last_c_type == CT_DOUBLEQUOTE)
+				{
+					cps->state = CPS_IN_DQSTRING;
+					break;
+				}
+
+				if (cps->last_c_type == CT_SINGLEQUOTE)
+				{
+					cps->state = CPS_IN_SQSTRING;
+					break;
+				}
+
+				if (cps->last_c_type != CT_NORMAL)
+				{
+					cps->state = CPS_PARSER_ERROR;
+				}
+
+				cps->state = CPS_IN_ARG;
+				break;
+
+			case CPS_IN_ARG:
+				if (cps->last_c_type == CT_WS)
+				{
+					cps->state = CPS_ARG_DONE;
+					break;
+				}
+
+				if (cps->last_c_type == CT_PIPE)
+				{
+					cps->state = CPS_ARG_DONE;
+					break;
+				}
+
+				if (cps->last_c_type == CT_SEMICOLON)
+				{
+					cps->state = CPS_ARG_DONE;
+					break;
+				}
+
+				if (cps->last_c_type == CT_NEWLINE)
+				{
+					cps->state = CPS_ARG_DONE;
+					break;
+				}
+
+				if (cps->last_c_type == CT_NULL)
+				{
+					cps->state = CPS_ARG_DONE;
+					break;
+				}
+
+				if (cps->last_c_type != CT_NORMAL)
+				{
+					fprintf(stderr, "syntax error\n");
+					cps->state = CPS_PARSER_ERROR;
+					break;
+				}
+
+				break;
+
+			case CPS_IN_DQSTRING:
+				if (cps->last_c_type == CT_DOUBLEQUOTE)
+				{
+					cps->i++;
+					cps->state = CPS_DQSTRING_DONE;
+					break;
+				}
+
+				break;
+
+			case CPS_IN_SQSTRING:
+				if (cps->last_c_type == CT_SINGLEQUOTE)
+				{
+					cps->i++;
+					cps->state = CPS_SQSTRING_DONE;
+					break;
+				}
+
+				break;
+
+			case CPS_CMDCHAIN_DONE:
+				if (cps->last_c_type == CT_WS)
+				{
+					cps->state = CPS_NOTHING;
+					break;
+				}
+
+				if (cps->last_c_type == CT_NEWLINE)
+				{
+					cps->state = CPS_NOTHING;
+					break;
+				}
+
+				if (cps->last_c_type == CT_NORMAL)
+				{
+					cps->state = CPS_IN_ARG;
+					break;
+				}
+
+				if (cps->last_c_type == CT_NULL)
+				{
+					cps->state = CPS_PARSER_DONE;
+					break;
+				}
+
+				cps->state = CPS_PARSER_ERROR;
+
+				break;
+
+			default:
+				fprintf(stderr, "default, state: %d\n", cps->state);
+				break;
+		}
+
+
+		if (cps->last_c_type != CT_WS)
+			len++;
+
+		if (cps->state == CPS_DQSTRING_DONE)
+		{
+			fprintf(stderr, "dqstring done, at -%c-, len %d\n", cps->buffer[cps->i], len);
+			break;
+		}
+
+		if (cps->state == CPS_SQSTRING_DONE)
+		{
+			break;
+		}
+
+		if (cps->state == CPS_ARG_DONE)
+		{
+			fprintf(stderr, "arg done\n");
+			break;
+		}
+
+		if (cps->state == CPS_CMD_DONE)
+		{
+			fprintf(stderr, "cmd done\n");
+			break;
+		}
+
+		if (cps->state == CPS_CMDCHAIN_DONE)
+		{
+			fprintf(stderr, "cmdchain done\n");
+			break;
+		}
+
+		if (cps->state == CPS_PARSER_DONE)
+		{
+			fprintf(stderr, "parser done\n");
+			break;
+		}
+
+		if (cps->state == CPS_PARSER_ERROR)
+		{
+			break;
+		}
+
+		cps->i++;
 	}
 
-	c = cps->buffer[cps->i++];
-	cmd_parser(cps, c);
-
-	return c;
+	return len;
 }
 
-int cmd_parser_analyze(CmdParserState_t *cps)
+void cmd_parser_skip_ws(CmdParser_t *cps)
+{
+	while (cmd_parser_c_is_ws(cps->buffer[cps->i]))
+		cps->i++;
+}
+
+int cmd_parser_analyze(CmdParser_t *cps)
 {
 	char current_arg[255] = {'\0'};
-	char c;
-	int  arg_i = 0;
 	Cmd_t **current_cmd;
 
 	if (!cps->buffer)
@@ -90,7 +281,7 @@ int cmd_parser_analyze(CmdParserState_t *cps)
 		return -1;
 	}
 
-	if (cps->flags & CPS_GIVE_INPUT)
+	if (cps->flags & CP_GIVE_INPUT)
 	{
 		fprintf(stderr, "INPUT FLAG IS ON\n");
 		return 1;
@@ -99,118 +290,84 @@ int cmd_parser_analyze(CmdParserState_t *cps)
 	cps->output = cmd_new();
 	current_cmd = &cps->output;
 
+	int i_start;
+	int expr_len = 0;
+
 	while (1)
 	{
-		c = cmd_parser_next_c(cps);
-
 		if ((*current_cmd)->ready)
 		{
 			current_cmd = &((*current_cmd)->next);
 			*current_cmd = cmd_new();
 		}
 
-		switch (cps->last_c_type)
+		cmd_parser_skip_ws(cps);
+
+		i_start = cps->i;
+		expr_len = cmd_parser_next_expr(cps);
+
+		switch (cps->state)
 		{
-			case CT_WS:
-				if (arg_i > 0)
-				{
-					current_arg[arg_i] = '\0';
-					cmd_add_arg(*current_cmd, current_arg);
-					arg_i = 0;
-				}
+			case CPS_ARG_DONE:
+			case CPS_DQSTRING_DONE:
+			case CPS_SQSTRING_DONE:
+				memcpy(current_arg, cps->buffer + i_start, expr_len);
+				current_arg[expr_len] = '\0';
+				cmd_add_arg(*current_cmd, current_arg);
+
+				cps->state = CPS_NOTHING;
 				break;
 
-			case CT_NEWLINE:
-				if (arg_i > 0)
-				{
-					current_arg[arg_i] = '\0';
-					cmd_add_arg(*current_cmd, current_arg);
-				}
-
-				cmd_set_ready(*current_cmd);
-				cps->flags |= CPS_TAKE_OUTPUT;
-
-				break;
-
-			case CT_NULL:
-				if (arg_i > 0)
-				{
-					current_arg[arg_i] = '\0';
-					cmd_add_arg(*current_cmd, current_arg);
-				}
-
-				cmd_set_ready(*current_cmd);
-				cps->flags = CPS_TAKE_OUTPUT | CPS_GIVE_INPUT;
-
-				break;
-
-			case CT_PIPE:
-				if (arg_i > 0)
-				{
-					current_arg[arg_i] = '\0';
-					cmd_add_arg(*current_cmd, current_arg);
-					arg_i = 0;
-				}
-
+			case CPS_CMD_DONE:
 				cmd_set_ready(*current_cmd);
 
+				cps->state = CPS_NOTHING;
 				break;
 
-			case CT_DOUBLEPIPE:
-				if (arg_i > 0)
+			case CPS_CMDCHAIN_DONE:
+				cmd_set_ready(*current_cmd);
+				if (cps->last_c_type == CT_DOUBLEPIPE)
 				{
-					current_arg[arg_i] = '\0';
-					cmd_add_arg(*current_cmd, current_arg);
-					arg_i = 0;
 				}
 
-				cmd_set_ready(*current_cmd);
-
+				cps->flags |= CP_TAKE_OUTPUT;
 				break;
 
-			case CT_SEMICOLON:
-				if (arg_i > 0)
-				{
-					current_arg[arg_i] = '\0';
-					cmd_add_arg(*current_cmd, current_arg);
-					arg_i = 0;
-				}
+			case CPS_PARSER_DONE:
+				cps->flags |= CP_TAKE_OUTPUT;
+				cps->flags |= CP_GIVE_INPUT;
 
-				cmd_set_ready(*current_cmd);
-				cps->flags = CPS_TAKE_OUTPUT;
-
-				break;
-
-			case CT_NORMAL:
-				current_arg[arg_i++] = c;
+				cps->state = CPS_NOTHING;
 				break;
 
 			default:
-				fprintf(stderr, "Error in cmd_parser, undefined state with char %c\n", c);
-				exit(-1);
+				break;
 		}
 
-		if (cps->flags & CPS_TAKE_OUTPUT)
+		if (cps->flags & CP_TAKE_OUTPUT)
+			break;
+
+		if (cps->state == CPS_PARSER_ERROR)
 			break;
 	}
 
 	if ((*current_cmd)->argc == 0)
 	{
-		cmd_free(*current_cmd);
+		free(*current_cmd);
 		*current_cmd = NULL;
 	}
 
 	return cps->flags;
 }
 
-Cmd_t *cmd_parser_get_cmds(CmdParserState_t *cps)
+Cmd_t *cmd_parser_get_cmds(CmdParser_t *cps)
 {
 	cps->flags = 0;
 
 	return cps->output;
 }
 
-void cmd_parser_output_free(CmdParserState_t *cps)
+void cmd_parser_output_free(CmdParser_t *cps)
 {
 	Cmd_t **ptr = &(cps->output);
 	Cmd_t *tmp;
@@ -223,12 +380,12 @@ void cmd_parser_output_free(CmdParserState_t *cps)
 	}
 }
 
-void cmd_parser_reset(CmdParserState_t* cps)
+void cmd_parser_reset(CmdParser_t* cps)
 {
-	memset(cps, '\0', sizeof(CmdParserState_t));
+	memset(cps, '\0', sizeof(CmdParser_t));
 }
 
-void cmd_parser_inc_last_type(CmdParserState_t *cps, CmdParserCType_t ctype)
+void cmd_parser_inc_last_type(CmdParser_t *cps, CmdParserCType_t ctype)
 {
 	if (cps->last_c_type == ctype)
 	{
@@ -239,9 +396,15 @@ void cmd_parser_inc_last_type(CmdParserState_t *cps, CmdParserCType_t ctype)
 		cps->last_c_type = ctype;
 		cps->last_c_count = 1;
 	}
+
+	if (cps->last_c_type == CT_PIPE && cps->last_c_count == 2)
+	{
+		cps->last_c_type = CT_DOUBLEPIPE;
+		cps->last_c_count = 1;
+	}
 }
 
-int cmd_parser(CmdParserState_t* cps, char c)
+int cmd_parser(CmdParser_t* cps, char c)
 {
 	if (!c)
 	{
@@ -266,6 +429,7 @@ int cmd_parser(CmdParserState_t* cps, char c)
 		{
 			cps->dquote = 0;
 			cps->in_string = 0;
+			cmd_parser_inc_last_type(cps, CT_DOUBLEQUOTE);
 
 			return 1;
 		}
@@ -274,6 +438,7 @@ int cmd_parser(CmdParserState_t* cps, char c)
 		{
 			cps->dquote = 1;
 			cps->in_string = 1;
+			cmd_parser_inc_last_type(cps, CT_DOUBLEQUOTE);
 
 			return 1;
 		}
@@ -289,6 +454,7 @@ int cmd_parser(CmdParserState_t* cps, char c)
 		{
 			cps->squote = 0;
 			cps->in_string = 0;
+			cmd_parser_inc_last_type(cps, CT_SINGLEQUOTE);
 
 			return 1;
 		}
@@ -297,6 +463,7 @@ int cmd_parser(CmdParserState_t* cps, char c)
 		{
 			cps->squote = 1;
 			cps->in_string = 1;
+			cmd_parser_inc_last_type(cps, CT_SINGLEQUOTE);
 
 			return 1;
 		}
@@ -319,12 +486,6 @@ int cmd_parser(CmdParserState_t* cps, char c)
 	if (c == '|')
 	{
 		cmd_parser_inc_last_type(cps, CT_PIPE);
-		if (cps->buffer[cps->i] == '|')
-		{
-			cps->i++;
-			cmd_parser_inc_last_type(cps, CT_DOUBLEPIPE);
-		}
-
 		return 1;
 	}
 
