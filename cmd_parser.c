@@ -90,6 +90,10 @@ int cmd_parser_next_expr(CmdParser_t *cps)
 				len += cps->cp_lib->cpl_in_sqstring_cb(cps);
 				break;
 
+			case CPS_IN_CMD:
+				len += cps->cp_lib->cpl_in_cmd_cb(cps);
+				break;
+
 			case CPS_CMDCHAIN_DONE:
 				len += cps->cp_lib->cpl_cmdchain_done_cb(cps);
 				break;
@@ -192,16 +196,20 @@ int cmd_parser_analyze(CmdParser_t *cps)
 		switch (cps->state)
 		{
 			case CPS_ARG_DONE:
-			case CPS_DQSTRING_DONE:
-			case CPS_SQSTRING_DONE:
-				fprintf(stderr, "expr len: %d\n", expr_len);
 				memcpy(current_arg, cps->buffer + i_start, expr_len);
 				current_arg[expr_len] = '\0';
 				cmd_add_arg(*current_cmd, current_arg);
 
-				if (!expr_len)
-					exit(0);
-				cps->state = CPS_NOTHING;
+				cps->state = CPS_IN_CMD;
+				break;
+
+			case CPS_DQSTRING_DONE:
+			case CPS_SQSTRING_DONE:
+				memcpy(current_arg, cps->buffer + i_start + 1, expr_len - 2);
+				current_arg[expr_len - 2] = '\0';
+				cmd_add_arg(*current_cmd, current_arg);
+
+				cps->state = CPS_IN_CMD;
 				break;
 
 			case CPS_CMD_DONE:

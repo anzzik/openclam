@@ -36,6 +36,7 @@ enum CmdParserState_e
 	CPS_DQSTRING_DONE,
 	CPS_SQSTRING_DONE,
 
+	CPS_IN_CMD,
 	CPS_CMD_DONE,
 	CPS_CMDCHAIN_DONE,
 
@@ -50,6 +51,7 @@ struct CPLib_s
 	int (*cpl_in_arg_cb)(void*);
 	int (*cpl_in_dqstring_cb)(void*);
 	int (*cpl_in_sqstring_cb)(void*);
+	int (*cpl_in_cmd_cb)(void*);
 	int (*cpl_cmdchain_done_cb)(void*);
 };
 
