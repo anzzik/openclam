@@ -4,24 +4,8 @@
 #define CP_GIVE_INPUT 1
 #define CP_TAKE_OUTPUT 2
 
-typedef enum CmdType_e CmdType_t;
-enum CmdType_e
-{
-	CMD_INTERNAL = 0,
-	CMD_EXECUTABLE
-};
+#include "cmd.h"
 
-typedef struct Cmd_s Cmd_t;
-struct Cmd_s
-{
-	CmdType_t type;
-	int   argc;
-	char *argv[50];
-
-	int ready;
-
-	Cmd_t *next;
-};
 
 typedef enum CmdParserCType_e CmdParserCType_t;
 enum CmdParserCType_e
@@ -59,11 +43,23 @@ enum CmdParserState_e
 	CPS_PARSER_ERROR
 };
 
+typedef struct CPLib_s CPLib_t;
+struct CPLib_s
+{
+	int (*cpl_nothing_cb)(void*);
+	int (*cpl_in_arg_cb)(void*);
+	int (*cpl_in_dqstring_cb)(void*);
+	int (*cpl_in_sqstring_cb)(void*);
+	int (*cpl_cmdchain_done_cb)(void*);
+};
+
 typedef struct CmdParser_s CmdParser_t;
 struct CmdParser_s
 {
 	int in_string;
 	int esc_next;
+
+	CPLib_t *cp_lib;
 	
 	CmdParserCType_t last_c_type;
 	int last_c_count;
@@ -81,12 +77,17 @@ struct CmdParser_s
 	int flags;
 };
 
+
+
 CmdParser_t *cmd_parser_new();
 int cmd_parser_buf_alloc(CmdParser_t *cps, char *str);
 void cmd_parser_buf_free(CmdParser_t *cps);
 int cmd_parser_status(CmdParser_t *cps);
 int cmd_parser_feed(CmdParser_t *cps, char *str);
 int cmd_parser_analyze(CmdParser_t *cps);
+
+int cmd_parser_on_cps_nothing(CmdParser_t *cps);
+
 int cmd_parser_next_expr(CmdParser_t *cps);
 int cmd_parser_get_cmd(CmdParser_t *cps);
 void cmd_parser_inc_last_type(CmdParser_t *cps, CmdParserCType_t ctype);
