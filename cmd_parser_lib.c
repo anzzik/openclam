@@ -45,8 +45,6 @@ static int cpl_on_cps_nothing(void *parser)
 			break;
 
 		case CT_SEMICOLON:
-			cps->i += 1;
-			cps->state = CPS_CMDCHAIN_DONE;
 			break;
 
 		case CT_NULL:
@@ -88,6 +86,10 @@ static int cpl_on_cps_in_arg(void* parser)
 		case CT_DOUBLEPIPE:
 		case CT_NEWLINE:
 		case CT_NULL:
+			cps->state = CPS_ARG_DONE;
+			break;
+
+		case CT_SEMICOLON:
 			cps->state = CPS_ARG_DONE;
 			break;
 
@@ -139,6 +141,11 @@ static int cpl_on_cps_in_cmd(void* parser)
 	switch (cps->last_c_type)
 	{
 		case CT_WS:
+			break;
+
+		case CT_SEMICOLON:
+			cps->i++;
+			cps->state = CPS_CMDCHAIN_DONE;
 			break;
 
 		case CT_NEWLINE:
