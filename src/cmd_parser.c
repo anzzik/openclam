@@ -83,6 +83,8 @@ l_next:
 	if (cmdp->t_current->type != TT_EOL)
 		cmd_parser_advance(cmdp);
 
+	cmd_set_ready(cmd);
+
 	return cmd;
 }
 
