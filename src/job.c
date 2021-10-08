@@ -121,8 +121,14 @@ int job_wait(Job_t* j, int nonblock)
 	if (nonblock)
 		options |= WNOHANG;
 
+	char blocking_str[] = "blocking";
+	char nonblocking_str[] = "non-blocking";
+
 	while (1)
 	{
+		char *s = nonblock == 1 ? nonblocking_str : blocking_str;
+		fprintf(stderr, "%s waitpid for pgid: %d\n",s, j->pgid);
+
 		pid = waitpid(-1 * j->pgid, &status, options);
 		if (pid < 0)
 		{
@@ -150,20 +156,19 @@ int job_wait(Job_t* j, int nonblock)
 
 
 		r = job_update_status(j, pid, status);
-		if (r)
+		if (r < 0)
 			return r;
 
 		if (job_is_stopped(j))
 		{
 			j->bg = 1;
-
 			fprintf(stderr, "job is stopped\n");
 			break;
 		}
-		else if (job_is_completed(j))
+
+		if (job_is_completed(j))
 		{
 			j->bg = 0;
-
 			fprintf(stderr, "job is completed\n");
 			break;
 		}
@@ -275,6 +280,7 @@ void job_launch(Job_t* j, int foreground)
 				exit(1);
 			}
 
+			printf("pipe ends: %d, %d\n", p_pipe[0], p_pipe[1]);
 			p_out = p_pipe[1];
 		}
 
@@ -286,9 +292,12 @@ void job_launch(Job_t* j, int foreground)
 			p->fd_out = p_out;
 			p->fd_err = j->fd_stderr;
 
-			pid = process_fork(p, j->pgid, j->fd_stdin, j->interactive, foreground);
+			if (p_in != p_pipe[0])
+			{
+				/* somehow pass unused p_pipe[0] to the new process so it can close it */
+			}
 
-			p->pid = pid;
+			pid = process_fork(p, j->pgid, j->fd_stdin, j->interactive, foreground);
 			if (j->interactive)
 			{
 				if (!j->pgid)
@@ -297,6 +306,7 @@ void job_launch(Job_t* j, int foreground)
 				setpgid(pid, j->pgid);
 			}
 
+			p->pid = pid;
 			wait_needed = 1;
 		}
 		else if (c->type == CMD_INTERNAL)
@@ -309,10 +319,23 @@ void job_launch(Job_t* j, int foreground)
 		}
 
 		if (p_in != j->fd_stdin)
-			close(p_in);
-		if (p_out != j->fd_stdout)
-			close(p_out);
+		{
+			/* This is p_pipe[0] (read-end) created in the previous cycle. 
+			   It's already been passed to the child process so
+			   we can close it here for the shell process */
 
+			close(p_in);
+		}
+
+		if (p_out != j->fd_stdout)
+		{
+			/* Same here except that the write-end is created
+			   in the same loop cycle as the child process */
+
+			close(p_out);
+		}
+
+		/* read-end for the next process in the job chain */
 		p_in = p_pipe[0];
 	}
 

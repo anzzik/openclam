@@ -22,7 +22,6 @@ void shell_free();
 void shell_push_job(Job_t *j);
 int shell_get_cmdline();
 void shell_free_jobs(int only_completed);
-void shell_free_tmp_argv(int argc, char **argv);
 int shell_builtin_cmd(Cmd_t *c, int fd_in, int fd_out, int fd_err);
 void shell_nb_wait();
 int shell_mainloop();

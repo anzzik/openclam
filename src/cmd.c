@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -69,15 +70,33 @@ void cmd_set_ready(Cmd_t *c)
 		c->type = CMD_INTERNAL;
 }
 
-void cmd_push(Cmd_t *c, Cmd_t *new_c)
+void cmd_print(Cmd_t *c)
 {
-	Cmd_t **ptr;
+	Cmd_t *current = c;
 
-	ptr = &(c->next);
+	fprintf(stderr, "Cmd: ");
+	while (current)
+	{
+		for (int i = 0; i < current->argc; i++)
+			fprintf(stderr, "%s ", current->argv[i]);
 
-	while (*ptr)
-		ptr = &((*ptr)->next);
+		if (current->piped)
+			fprintf(stderr, "| ");
 
-	*ptr = new_c;
+		current = current->next;
+	}
+
+	fprintf(stderr, "\n");
+}
+
+void cmd_push(Cmd_t *c_head, Cmd_t *c)
+{
+	Cmd_t *current = c_head;
+	while (current->next)
+	{
+		current = current->next;
+	}
+
+	current->next = c;
 }
 

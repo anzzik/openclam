@@ -46,12 +46,12 @@ int process_fork(Process_t *p, pid_t pgid, int shell_fd, int interactive, int fo
 	}
 
 	if (pid == 0) 
-		process_launch(p, pgid, shell_fd, interactive, foreground);
+		process_start_child(p, pgid, shell_fd, interactive, foreground);
 
 	return pid;
 }
 
-void process_launch(Process_t *p, pid_t pgid, int shell_fd, int interactive, int foreground)
+void process_start_child(Process_t *p, pid_t pgid, int shell_fd, int interactive, int foreground)
 {
 	if (interactive)
 	{
@@ -65,7 +65,8 @@ void process_launch(Process_t *p, pid_t pgid, int shell_fd, int interactive, int
 			pgid = p->pid;
 
 		setpgid(p->pid, pgid);
-		if (foreground)
+
+		if (foreground && tcgetpgrp(shell_fd) != pgid)
 			tcsetpgrp(shell_fd, pgid);
 
 		signal(SIGINT,  SIG_DFL);

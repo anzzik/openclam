@@ -11,32 +11,33 @@
 #include "shell.h"
 #include "cmd_parser.h"
 #include "builtin_cmd.h"
-
+#include "token.h"
 
 static Shell_t *sh;
 
 int shell_init()
 {
 	pid_t fg_pgid;
-	sh = malloc(sizeof(Shell_t));
 
-	sh->fd = STDIN_FILENO;
-	sh->pid      = getpid();
-	sh->pgid     = getpgrp();
+	sh        = malloc(sizeof(Shell_t));
+	sh->fd    = STDIN_FILENO;
+	sh->pid   = getpid();
+	sh->pgid  = getpgrp();
 
 	if (!isatty(sh->fd))
 	{
 		fprintf(stderr, "%s\n", "shell is NOT interactive");
-
 		return -1;
 	}
 
+	/* get foreground process group id */
 	fg_pgid = tcgetpgrp(sh->fd);
 	while (fg_pgid != sh->pgid)
 	{
 		fprintf(stderr, "shell is not in foreground, have to stop it until fg..\n");
-		kill(-1 * sh->pgid, SIGTTIN); // this puts the process group in T state
-		
+
+		/* this puts the process group in T state and blocks until woken up by fg */
+		kill(-1 * sh->pgid, SIGTTIN); // 
 		fg_pgid = tcgetpgrp(sh->fd);
 	}
 
@@ -55,7 +56,10 @@ int shell_init()
 
 	sh->pgid = sh->pid;
 
+	/* put the shell process group on foreground */
 	tcsetpgrp(sh->fd, sh->pid);
+
+	/* get termios attributes from the pty device (fd) */
 	tcgetattr(sh->fd, &sh->tmodes);
 	memcpy(&sh->def_tmodes, &sh->tmodes, sizeof(struct termios));
 
@@ -106,12 +110,6 @@ int shell_get_cmdline(char *buf, int n)
 	return read_c;
 }
 
-void shell_free_tmp_argv(int argc, char **argv)
-{
-	for (int i = 0; i < argc; i++)
-		free(argv[i]);
-}
-
 void shell_free_jobs(int only_completed)
 {
 	Job_t **ptr;
@@ -146,59 +144,37 @@ void shell_nb_wait()
 
 int shell_mainloop()
 {
-	Job_t *j;
 	Cmd_t *cmd;
-	CmdParser_t *cps;
-
-	char buf[255] = { '\0' };
-	int r = 0;
-	int cps_status;
-
-	cps = cmd_parser_new();
+	CmdParser_t *cmdp = cmd_parser_new();
 
 	while (1)
 	{
-		buf[0] = '\0';
-
-		r = shell_get_cmdline(buf, 255);
+		char cmdline_buf[255] = { '\0' };
+		int r = shell_get_cmdline(cmdline_buf, 255);
 		if (r == EOF)
 		{
 			printf("exit\n");
 			break;
 		}
 
-		if (!strcmp(buf, ""))
+		if (!strcmp(cmdline_buf, ""))
 		{
 			shell_nb_wait();
+			shell_free_jobs(1);
 			continue;
 		}
 
-		cmd_parser_reset(cps);
-		cmd_parser_feed(cps, buf);
-
-		while (1)
+		cmd_parser_set_token_list(cmdp, token_process_str(cmdline_buf));
+		while ((cmd = cmd_parser_next_cmdgrp(cmdp)))
 		{
-			cps_status = cmd_parser_analyze(cps);
+			Job_t *j = job_new(sh->pgid, &sh->def_tmodes, &sh->tmodes);
 
-			if (cps_status & CP_TAKE_OUTPUT)
-			{
-				cmd = cmd_parser_get_cmds(cps);
-				if (!cmd || cmd->argc == 0)
-					break;
+			j->builtin_cmd_cb = shell_builtin_cmd;
+			shell_push_job(j);
+			job_set_cmd(j, cmd);
+			job_launch(j, 1);
 
-				j = job_new(sh->pgid, &sh->def_tmodes, &sh->tmodes);
-				shell_push_job(j);
-
-				j->builtin_cmd_cb = shell_builtin_cmd;
-				job_set_cmd(j, cmd);
-				job_launch(j, 1);
-
-				shell_free_jobs(1);
-				cmd_parser_output_free(cps);
-			}
-
-			if (cps_status & CP_GIVE_INPUT)
-				break;
+			shell_free_jobs(1);
 		}
 	}
 
