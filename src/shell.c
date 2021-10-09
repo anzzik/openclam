@@ -146,6 +146,7 @@ int shell_mainloop()
 {
 	Cmd_t *cmd;
 	CmdParser_t *cmdp = cmd_parser_new();
+	int retval = 0;
 
 	while (1)
 	{
@@ -164,7 +165,14 @@ int shell_mainloop()
 			continue;
 		}
 
-		cmd_parser_set_token_list(cmdp, token_process_str(cmdline_buf));
+		Token_t *t_list = token_process_str(cmdline_buf);
+		if (!t_list)
+		{
+			retval = -1;
+			break;
+		}
+
+		cmd_parser_set_token_list(cmdp, t_list);
 		while ((cmd = cmd_parser_next_cmdgrp(cmdp)))
 		{
 			Job_t *j = job_new(sh->pgid, &sh->def_tmodes, &sh->tmodes);
@@ -176,8 +184,10 @@ int shell_mainloop()
 
 			shell_free_jobs(1);
 		}
+
+		cmd_parser_free_token_list(cmdp);
 	}
 
-	return 0;
+	return retval;
 }
 

@@ -35,6 +35,7 @@ void cmd_parser_advance(CmdParser_t *cmdp)
 		fprintf(stderr, "advancing from EOL!\n");
 		return;
 	}
+
 	cmdp->t_current = cmdp->t_current->next;
 }
 

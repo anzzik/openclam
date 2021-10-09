@@ -12,16 +12,21 @@ enum TType_s
 	TT_SQ,
 	TT_ESC,
 	TT_PIPE,
+	TT_EQUALS,
+	TT_DOUBLEEQUALS,
 	TT_OPEN_CURLY,
 	TT_CLOSE_CURLY,
 	TT_SEMICOLON,
 	TT_AND,
 	TT_WORD,
+	TT_NUMBER,
 
 	/* round 2 tokens */
 	TT_DQ_STR,
 	TT_SQ_STR,
 	TT_OR,
+	TT_VARDECL,
+	TT_VARVALUE,
 };
 
 typedef struct Token_s Token_t;
@@ -34,7 +39,8 @@ struct Token_s
 };
 
 
-void token_develop_list(Token_t *head);
+Token_t *token_develop_list(Token_t *head);
+Token_t *token_develop_assignments(Token_t *head);
 void token_free(Token_t *t);
 TType_t token_get_type(const char *str);
 int token_is_c_token(char c);

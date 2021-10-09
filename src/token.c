@@ -3,7 +3,7 @@
 #include <string.h>
 #include "token.h"
 
-void token_develop_list(Token_t *head)
+Token_t *token_develop_list(Token_t *head)
 {
 	enum State {
 		NORMAL = 0,
@@ -17,6 +17,7 @@ void token_develop_list(Token_t *head)
 	Token_t *t = head;
 	Token_t *prev = 0;
 	Token_t *multipart = 0;
+	Token_t *new_head = head;
 	char buf[255] = { 0 };
 	int buf_at = 0;
 
@@ -64,19 +65,88 @@ void token_develop_list(Token_t *head)
 			goto l_next;
 		}
 
-		if (t->type == TT_PIPE && prev->type == TT_PIPE)
+		if (t->type == TT_PIPE)
 		{
-			token_set_buffer(prev, "||", TT_OR);
-			prev->next = t->next;
-			token_free(t);
-			goto l_next;
+		       if (prev->type == TT_PIPE)
+		       {
+			       token_set_buffer(prev, "||", TT_OR);
+			       prev->next = t->next;
+			       token_free(t);
+			       goto l_next;
+			}
 		}
 
+		if (t->type == TT_EQUALS)
+		{
+			if (prev->type == TT_EQUALS)
+			{
+				token_set_buffer(prev, "==", TT_DOUBLEEQUALS);
+				prev->next = t->next;
+				token_free(t);
+				goto l_next;
+			}
+		}
 
 l_next:
 		prev = t;
 		t = t->next;
 	}
+
+	return new_head;
+}
+
+Token_t *token_develop_assignments(Token_t *head)
+{
+	enum State {
+		NORMAL = 0,
+		IN_ASSIGNMENT,
+		SYNTAX_ERROR
+	};
+
+	Token_t *new_head = head;
+	Token_t *t = head;
+	Token_t *prev = 0;
+	enum State state = NORMAL;
+
+	while (t)
+	{
+		if (state == IN_ASSIGNMENT)
+		{
+			t->type = TT_VARVALUE;
+			state = NORMAL;
+			goto l_next;
+		}
+
+		if (t->type == TT_EQUALS)
+		{
+			if (!prev || prev->type != TT_WORD)
+			{
+				fprintf(stderr, "Error in assignment, bad var name\n");
+				state = SYNTAX_ERROR;
+				break;
+			}
+
+			if (!t->next || (t->next->type != TT_WORD && t->next->type != TT_NUMBER))
+			{
+				fprintf(stderr, "Error in assignment\n");
+				state = SYNTAX_ERROR;
+				break;
+			}
+
+			prev->type = TT_VARDECL;
+			state = IN_ASSIGNMENT;
+			goto l_next;
+		}
+
+l_next:
+		prev = t;
+		t = t->next;
+	}
+
+	if (state == SYNTAX_ERROR)
+		new_head = 0;
+
+	return new_head;
 }
 
 void token_free(Token_t *t)
@@ -125,10 +195,17 @@ TType_t token_get_type(const char *str)
 	if (!strcmp(str, "||"))
 		return TT_OR;
 
-	if (strlen(str) > 1)
-		return TT_WORD;
+	if (!strcmp(str, "="))
+		return TT_EQUALS;
 
-	return TT_UNKNOWN;
+	if (!strcmp(str, "=="))
+		return TT_DOUBLEEQUALS;
+
+	for (int i = 0; *(str+i); i++)
+		if (str[i] < 48 || str[i] > 57)
+			return TT_WORD;
+
+	return TT_NUMBER;
 }
 
 int token_is_c_token(char c)
@@ -141,6 +218,7 @@ int token_is_c_token(char c)
 		case '}':
 		case ' ':
 		case '"': 
+		case '=':
 		case '\'':
 		case '\\':
 		case '\0':
@@ -243,8 +321,17 @@ Token_t *token_process_str(char *buf)
 			break;
 	}
 
-	token_develop_list(t_first);
+	t_first = token_develop_list(t_first);
+	if (!t_first)
+		return 0;
+
+	t_first = token_develop_assignments(t_first);
+	if (!t_first)
+		return 0;
+
 	t_first = token_trim_list(t_first);
+	if (!t_first)
+		return 0;
 
 	return t_first;
 }
